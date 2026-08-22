@@ -1,11 +1,9 @@
 """
 app.py
 
-Interface visual do projeto, rodando no navegador local.
-Tem duas partes:
-  1. Testar imagem: arrasta/seleciona uma imagem e ve a previsao
-  2. Adicionar ao dataset: manda novas imagens pra treino (real ou IA)
-     e um botao pra retreinar o modelo com elas
+Interface visual do projeto, rodando no navegador.
+3 categorias: Real, GPT e Gemini. Mostra a comparacao de
+acuracia entre geradores direto na tela.
 
 Para rodar: streamlit run app.py
 """
@@ -20,24 +18,29 @@ from extrair_features import extrair_features
 from montar_dataset import montar_dataset
 from treinar_modelo import treinar
 
-PASTA_REAIS = "dataset/reais"
-PASTA_IA = "dataset/ia"
+PASTAS = {
+    "Real": "dataset/reais",
+    "GPT": "dataset/ia_gpt",
+    "Gemini": "dataset/ia_gemini",
+}
 CAMINHO_MODELO = "modelo.pkl"
 
-os.makedirs(PASTA_REAIS, exist_ok=True)
-os.makedirs(PASTA_IA, exist_ok=True)
+for pasta in PASTAS.values():
+    os.makedirs(pasta, exist_ok=True)
 
 st.set_page_config(page_title="Detector de Imagem Real vs IA", layout="centered")
 st.title("Detector de Imagem: Real vs Gerada por IA")
 
-aba_testar, aba_adicionar = st.tabs(["Testar imagem", "Adicionar ao dataset"])
+aba_testar, aba_adicionar, aba_resultados = st.tabs(
+    ["Testar imagem", "Adicionar ao dataset", "Resultados do treino"]
+)
 
 # ---------- ABA 1: TESTAR IMAGEM ----------
 with aba_testar:
     st.subheader("Envie uma imagem pra ver a previsao do modelo")
 
     if not os.path.exists(CAMINHO_MODELO):
-        st.warning("Ainda nao existe um modelo treinado (modelo.pkl). Treine primeiro na aba 'Adicionar ao dataset'.")
+        st.warning("Ainda nao existe um modelo treinado. Treine primeiro na aba 'Adicionar ao dataset'.")
     else:
         arquivo = st.file_uploader(
             "Arraste uma imagem aqui ou clique pra selecionar",
@@ -46,7 +49,7 @@ with aba_testar:
         )
 
         if arquivo is not None:
-            caminho_temporario = os.path.join("temp_teste.jpg")
+            caminho_temporario = "temp_teste.jpg"
             imagem_pil = Image.open(arquivo).convert("RGB")
             imagem_pil.save(caminho_temporario)
 
@@ -79,8 +82,8 @@ with aba_testar:
 with aba_adicionar:
     st.subheader("Adicionar novas imagens ao dataset de treino")
 
-    classe = st.radio("Essa(s) imagem(ns) e/sao:", ["Real", "Gerada por IA"], key="classe")
-    pasta_destino = PASTA_REAIS if classe == "Real" else PASTA_IA
+    categoria = st.radio("Essa(s) imagem(ns) e/sao de qual categoria:", list(PASTAS.keys()), key="categoria")
+    pasta_destino = PASTAS[categoria]
 
     arquivos_novos = st.file_uploader(
         "Arraste uma ou varias imagens aqui",
@@ -90,7 +93,7 @@ with aba_adicionar:
     )
 
     if arquivos_novos:
-        if st.button(f"Salvar {len(arquivos_novos)} imagem(ns) como '{classe}'"):
+        if st.button(f"Salvar {len(arquivos_novos)} imagem(ns) como '{categoria}'"):
             for arquivo in arquivos_novos:
                 imagem_pil = Image.open(arquivo).convert("RGB")
                 caminho_salvar = os.path.join(pasta_destino, arquivo.name)
@@ -99,15 +102,67 @@ with aba_adicionar:
 
     st.divider()
 
-    qtd_reais = len([f for f in os.listdir(PASTA_REAIS) if f.lower().endswith((".jpg", ".jpeg", ".png"))])
-    qtd_ia = len([f for f in os.listdir(PASTA_IA) if f.lower().endswith((".jpg", ".jpeg", ".png"))])
-    st.write(f"Dataset atual: **{qtd_reais}** imagens reais, **{qtd_ia}** imagens de IA")
+    contagens = {}
+    for nome, pasta in PASTAS.items():
+        contagens[nome] = len([f for f in os.listdir(pasta) if f.lower().endswith((".jpg", ".jpeg", ".png"))])
+
+    st.write(
+        f"Dataset atual: "
+        f"**{contagens['Real']}** reais, "
+        f"**{contagens['GPT']}** GPT, "
+        f"**{contagens['Gemini']}** Gemini"
+    )
 
     if st.button("Retreinar modelo com o dataset atual"):
-        if qtd_reais < 2 or qtd_ia < 2:
-            st.error("Precisa de pelo menos 2 imagens de cada classe pra treinar.")
+        if contagens["Real"] < 2 or (contagens["GPT"] + contagens["Gemini"]) < 2:
+            st.error("Precisa de pelo menos 2 imagens reais e 2 de IA (somando GPT+Gemini) pra treinar.")
         else:
             with st.spinner("Montando dataset e treinando..."):
-                montar_dataset(PASTA_REAIS, PASTA_IA, "dataset.csv")
-                modelo = treinar("dataset.csv", CAMINHO_MODELO)
-            st.success("Modelo retreinado com sucesso! Va na aba 'Testar imagem' pra experimentar.")
+                montar_dataset(
+                    pastas_com_rotulo=[
+                        (PASTAS["Real"], 1, "real"),
+                        (PASTAS["GPT"], 0, "gpt"),
+                        (PASTAS["Gemini"], 0, "gemini"),
+                    ],
+                    caminho_saida="dataset.csv",
+                )
+                resultado = treinar("dataset.csv", CAMINHO_MODELO)
+                st.session_state["ultimo_resultado"] = resultado
+            st.success("Modelo retreinado! Confira a aba 'Resultados do treino' pra ver a comparacao.")
+
+# ---------- ABA 3: RESULTADOS DO TREINO ----------
+with aba_resultados:
+    st.subheader("Comparacao de resultados do ultimo treino")
+
+    if "ultimo_resultado" not in st.session_state:
+        st.info("Ainda nao ha resultado nessa sessao. Va na aba 'Adicionar ao dataset' e clique em 'Retreinar modelo'.")
+    else:
+        resultado = st.session_state["ultimo_resultado"]
+
+        col1, col2 = st.columns(2)
+        col1.metric("Acuracia geral", f"{resultado['acuracia_geral']*100:.1f}%")
+        col2.metric("Tempo de treino", f"{resultado['tempo_treino']:.3f}s")
+
+        st.write("### Acuracia por gerador")
+        tabela_geradores = pd.DataFrame([
+            {
+                "Gerador": nome,
+                "Acuracia (%)": f"{dados['acuracia']:.1f}",
+                "Acertos": f"{dados['acertos']}/{dados['total']}",
+            }
+            for nome, dados in resultado["acuracia_por_gerador"].items()
+        ])
+        st.table(tabela_geradores)
+
+        grafico_dados = pd.DataFrame({
+            nome: [dados["acuracia"]]
+            for nome, dados in resultado["acuracia_por_gerador"].items()
+        }, index=["Acuracia (%)"]).T
+        st.bar_chart(grafico_dados)
+
+        st.write("### Importancia de cada caracteristica (feature)")
+        tabela_features = pd.DataFrame(resultado["importancias"], columns=["Feature", "Importancia"])
+        st.bar_chart(tabela_features.set_index("Feature"))
+
+        with st.expander("Ver relatorio tecnico completo"):
+            st.text(resultado["relatorio_texto"])
