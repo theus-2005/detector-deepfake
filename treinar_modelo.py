@@ -1,80 +1,78 @@
 """
-montar_dataset.py
+treinar_modelo.py
 
-Percorre varias pastas de imagens (reais e de diferentes geradores de IA),
-extrai as features de cada imagem, e monta uma tabela (CSV) pronta pra
-treinar o modelo. Agora tambem guarda QUAL GERADOR foi usado em cada
-imagem, pra dar pra comparar GPT vs Gemini depois.
-
-ANTES DE RODAR: organize suas imagens assim:
-
-    dataset/
-        reais/
-            foto1.jpg
-            foto2.jpg
-            ...
-        ia_gpt/
-            gerada1.jpg
-            ...
-        ia_gemini/
-            gerada1.jpg
-            ...
+Le o dataset.csv (gerado pelo montar_dataset.py), treina um classificador,
+e agora tambem mostra a acuracia SEPARADA por gerador (GPT vs Gemini),
+pra comparar qual e mais facil/dificil de detectar.
 """
 
-import os
-import csv
-from extrair_features import extrair_features
+import time
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
+import joblib
 
 
-def montar_dataset(pastas_com_rotulo, caminho_saida="dataset.csv"):
-    """
-    pastas_com_rotulo: lista de tuplas (caminho_da_pasta, rotulo, nome_gerador)
-        rotulo: 1 = real, 0 = gerada por IA
-        nome_gerador: string livre, tipo "real", "gpt", "gemini"
-    """
-    linhas = []
-    colunas = None
+def treinar(caminho_csv="dataset.csv", caminho_modelo="modelo.pkl"):
+    dados = pd.read_csv(caminho_csv)
 
-    for pasta, rotulo, nome_gerador in pastas_com_rotulo:
-        if not os.path.isdir(pasta):
-            print(f"Aviso: pasta '{pasta}' nao encontrada, pulando.")
-            continue
+    # X = as features (tudo menos rotulo e gerador)
+    # y = o gabarito (rotulo: 1=real, 0=IA)
+    # gerador fica separado, so pra analise depois -- nao entra no treino
+    X = dados.drop(columns=["rotulo", "gerador"])
+    y = dados["rotulo"]
+    gerador = dados["gerador"]
 
-        arquivos = [f for f in os.listdir(pasta) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+    # dividimos tudo junto (X, y, gerador) com os MESMOS indices,
+    # assim sabemos de qual gerador cada imagem de teste veio
+    X_treino, X_teste, y_treino, y_teste, gerador_treino, gerador_teste = train_test_split(
+        X, y, gerador, test_size=0.2, random_state=42, stratify=y
+    )
 
-        for nome_arquivo in arquivos:
-            caminho_completo = os.path.join(pasta, nome_arquivo)
-            features = extrair_features(caminho_completo)
+    inicio = time.time()
+    modelo = RandomForestClassifier(n_estimators=200, random_state=42)
+    modelo.fit(X_treino, y_treino)
+    fim = time.time()
 
-            if features is None:
-                print(f"Aviso: nao consegui ler '{caminho_completo}', pulando.")
-                continue
+    predicoes = modelo.predict(X_teste)
+    acuracia_geral = accuracy_score(y_teste, predicoes)
 
-            if colunas is None:
-                colunas = list(features.keys())
+    print(f"\nTempo de treino: {fim - inicio:.4f} segundos")
+    print(f"Acuracia GERAL no teste: {acuracia_geral * 100:.1f}%")
+    print(f"\nRelatorio detalhado:")
+    print(classification_report(y_teste, predicoes, target_names=["IA", "Real"]))
 
-            linha = [features[c] for c in colunas] + [rotulo, nome_gerador]
-            linhas.append(linha)
-            print(f"Processada: {nome_arquivo} (rotulo={rotulo}, gerador={nome_gerador})")
+    # ---- NOVO: acuracia separada por gerador ----
+    print("Acuracia separada por gerador:")
+    resultado_teste = pd.DataFrame({
+        "y_real": y_teste.values,
+        "y_previsto": predicoes,
+        "gerador": gerador_teste.values,
+    })
 
-    if not linhas:
-        print("Nenhuma imagem processada. Confira os caminhos das pastas.")
-        return
+    for nome_gerador in resultado_teste["gerador"].unique():
+        subgrupo = resultado_teste[resultado_teste["gerador"] == nome_gerador]
+        acertos = (subgrupo["y_real"] == subgrupo["y_previsto"]).sum()
+        total = len(subgrupo)
+        acuracia_grupo = acertos / total * 100
+        print(f"  {nome_gerador}: {acuracia_grupo:.1f}% ({acertos}/{total} imagens no teste)")
 
-    with open(caminho_saida, "w", newline="") as arquivo_csv:
-        escritor = csv.writer(arquivo_csv)
-        escritor.writerow(colunas + ["rotulo", "gerador"])
-        escritor.writerows(linhas)
+    # importancia de cada feature
+    importancias = sorted(
+        zip(X.columns, modelo.feature_importances_),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    print("\nImportancia de cada feature (da mais util pra menos util):")
+    for nome, importancia in importancias:
+        print(f"  {nome}: {importancia:.4f}")
 
-    print(f"\nDataset salvo em '{caminho_saida}' com {len(linhas)} imagens.")
+    joblib.dump(modelo, caminho_modelo)
+    print(f"\nModelo salvo em '{caminho_modelo}'")
+
+    return modelo
 
 
 if __name__ == "__main__":
-    montar_dataset(
-        pastas_com_rotulo=[
-            ("dataset/reais", 1, "real"),
-            ("dataset/ia_gpt", 0, "gpt"),
-            ("dataset/ia_gemini", 0, "gemini"),
-        ],
-        caminho_saida="dataset.csv",
-    )
+    treinar()
