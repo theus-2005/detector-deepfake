@@ -1,59 +1,80 @@
 """
-treinar_modelo.py
+montar_dataset.py
 
-Le o dataset.csv (gerado pelo montar_dataset.py) e treina
-um classificador pra distinguir imagem real de imagem gerada por IA.
+Percorre varias pastas de imagens (reais e de diferentes geradores de IA),
+extrai as features de cada imagem, e monta uma tabela (CSV) pronta pra
+treinar o modelo. Agora tambem guarda QUAL GERADOR foi usado em cada
+imagem, pra dar pra comparar GPT vs Gemini depois.
+
+ANTES DE RODAR: organize suas imagens assim:
+
+    dataset/
+        reais/
+            foto1.jpg
+            foto2.jpg
+            ...
+        ia_gpt/
+            gerada1.jpg
+            ...
+        ia_gemini/
+            gerada1.jpg
+            ...
 """
 
-import time
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report
-import joblib
+import os
+import csv
+from extrair_features import extrair_features
 
 
-def treinar(caminho_csv="dataset.csv", caminho_modelo="modelo.pkl"):
-    dados = pd.read_csv(caminho_csv)
+def montar_dataset(pastas_com_rotulo, caminho_saida="dataset.csv"):
+    """
+    pastas_com_rotulo: lista de tuplas (caminho_da_pasta, rotulo, nome_gerador)
+        rotulo: 1 = real, 0 = gerada por IA
+        nome_gerador: string livre, tipo "real", "gpt", "gemini"
+    """
+    linhas = []
+    colunas = None
 
-    # X = todas as colunas menos "rotulo" (as features)
-    # y = só a coluna "rotulo" (o gabarito: 1=real, 0=IA)
-    X = dados.drop(columns=["rotulo"])
-    y = dados["rotulo"]
+    for pasta, rotulo, nome_gerador in pastas_com_rotulo:
+        if not os.path.isdir(pasta):
+            print(f"Aviso: pasta '{pasta}' nao encontrada, pulando.")
+            continue
 
-    X_treino, X_teste, y_treino, y_teste = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+        arquivos = [f for f in os.listdir(pasta) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
 
-    inicio = time.time()
-    modelo = RandomForestClassifier(n_estimators=200, random_state=42)
-    modelo.fit(X_treino, y_treino)
-    fim = time.time()
+        for nome_arquivo in arquivos:
+            caminho_completo = os.path.join(pasta, nome_arquivo)
+            features = extrair_features(caminho_completo)
 
-    predicoes = modelo.predict(X_teste)
-    acuracia = accuracy_score(y_teste, predicoes)
+            if features is None:
+                print(f"Aviso: nao consegui ler '{caminho_completo}', pulando.")
+                continue
 
-    print(f"\nTempo de treino: {fim - inicio:.4f} segundos")
-    print(f"Acuracia no teste: {acuracia * 100:.1f}%")
-    print(f"\nRelatorio detalhado:")
-    print(classification_report(y_teste, predicoes, target_names=["IA", "Real"]))
+            if colunas is None:
+                colunas = list(features.keys())
 
-    # importancia de cada feature -- mostra quais numeros mais ajudaram
-    # o modelo a decidir. Bom material pro seu artigo!
-    importancias = sorted(
-        zip(X.columns, modelo.feature_importances_),
-        key=lambda item: item[1],
-        reverse=True,
-    )
-    print("Importancia de cada feature (da mais util pra menos util):")
-    for nome, importancia in importancias:
-        print(f"  {nome}: {importancia:.4f}")
+            linha = [features[c] for c in colunas] + [rotulo, nome_gerador]
+            linhas.append(linha)
+            print(f"Processada: {nome_arquivo} (rotulo={rotulo}, gerador={nome_gerador})")
 
-    joblib.dump(modelo, caminho_modelo)
-    print(f"\nModelo salvo em '{caminho_modelo}'")
+    if not linhas:
+        print("Nenhuma imagem processada. Confira os caminhos das pastas.")
+        return
 
-    return modelo
+    with open(caminho_saida, "w", newline="") as arquivo_csv:
+        escritor = csv.writer(arquivo_csv)
+        escritor.writerow(colunas + ["rotulo", "gerador"])
+        escritor.writerows(linhas)
+
+    print(f"\nDataset salvo em '{caminho_saida}' com {len(linhas)} imagens.")
 
 
 if __name__ == "__main__":
-    treinar()
+    montar_dataset(
+        pastas_com_rotulo=[
+            ("dataset/reais", 1, "real"),
+            ("dataset/ia_gpt", 0, "gpt"),
+            ("dataset/ia_gemini", 0, "gemini"),
+        ],
+        caminho_saida="dataset.csv",
+    )
