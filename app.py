@@ -105,7 +105,7 @@ with aba_adicionar:
 
     contagens = {}
     for nome, pasta in PASTAS.items():
-        contagens[nome] = len([f for f in os.listdir(pasta) if f.lower().endswith((".jpg", ".jpeg", ".png"))])
+        contagens[nome] = len([f for f in os.listdir(pasta) if f.lower().endswith((".jpg", ".jpeg", ".png", ".jfif", ".webp"))])
 
     st.write(
         f"Dataset atual: "
