@@ -45,7 +45,7 @@ with aba_testar:
     else:
         arquivo = st.file_uploader(
             "Arraste uma imagem aqui ou clique pra selecionar",
-            type=["jpg", "jpeg", "png"],
+            type=["jpg", "jpeg", "png", "jfif", "webp"],
             key="teste",
         )
 
@@ -88,7 +88,7 @@ with aba_adicionar:
 
     arquivos_novos = st.file_uploader(
         "Arraste uma ou varias imagens aqui",
-        type=["jpg", "jpeg", "png"],
+        type=["jpg", "jpeg", "png", "jfif", "webp"],
         accept_multiple_files=True,
         key="upload_dataset",
     )
