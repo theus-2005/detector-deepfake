@@ -13,6 +13,7 @@ import streamlit as st
 from PIL import Image
 import joblib
 import pandas as pd
+from datetime import datetime
 
 from extrair_features import extrair_features
 from montar_dataset import montar_dataset
@@ -128,6 +129,24 @@ with aba_adicionar:
                 )
                 resultado = treinar("dataset.csv", CAMINHO_MODELO)
                 st.session_state["ultimo_resultado"] = resultado
+
+                linha_historico = {
+                    "data_hora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "qtd_real": contagens["Real"],
+                    "qtd_gpt": contagens["GPT"],
+                    "qtd_gemini": contagens["Gemini"],
+                    "acuracia_geral": round(resultado["acuracia_geral"] * 100, 1),
+                }
+                for nome_gerador, dados_gerador in resultado["acuracia_por_gerador"].items():
+                    linha_historico[f"acuracia_{nome_gerador}"] = round(dados_gerador["acuracia"], 1)
+
+                caminho_historico = "historico_resultados.csv"
+                df_nova_linha = pd.DataFrame([linha_historico])
+                if os.path.exists(caminho_historico):
+                    df_nova_linha.to_csv(caminho_historico, mode="a", header=False, index=False)
+                else:
+                    df_nova_linha.to_csv(caminho_historico, mode="w", header=True, index=False)
+
             st.success("Modelo retreinado! Confira a aba 'Resultados do treino' pra ver a comparacao.")
 
 # ---------- ABA 3: RESULTADOS DO TREINO ----------
@@ -164,5 +183,27 @@ with aba_resultados:
         tabela_features = pd.DataFrame(resultado["importancias"], columns=["Feature", "Importancia"])
         st.bar_chart(tabela_features.set_index("Feature"))
 
+        st.download_button(
+            "Baixar tabela de acuracia por gerador (CSV)",
+            data=tabela_geradores.to_csv(index=False),
+            file_name="acuracia_por_gerador.csv",
+            mime="text/csv",
+        )
+
         with st.expander("Ver relatorio tecnico completo"):
             st.text(resultado["relatorio_texto"])
+
+        st.divider()
+        st.write("### Historico de todos os treinos (evolucao ao longo do tempo)")
+        caminho_historico = "historico_resultados.csv"
+        if os.path.exists(caminho_historico):
+            df_historico = pd.read_csv(caminho_historico)
+            st.dataframe(df_historico)
+            st.download_button(
+                "Baixar historico completo (CSV)",
+                data=df_historico.to_csv(index=False),
+                file_name="historico_resultados.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("Ainda sem historico salvo.")

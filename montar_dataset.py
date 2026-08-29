@@ -40,7 +40,7 @@ def montar_dataset(pastas_com_rotulo, caminho_saida="dataset.csv"):
             print(f"Aviso: pasta '{pasta}' nao encontrada, pulando.")
             continue
 
-        arquivos = [f for f in os.listdir(pasta) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+        arquivos = [f for f in os.listdir(pasta) if f.lower().endswith((".jpg", ".jpeg", ".png", ".jfif", ".webp"))]
 
         for nome_arquivo in arquivos:
             caminho_completo = os.path.join(pasta, nome_arquivo)
