@@ -49,23 +49,36 @@ def feature_histograma_cor(imagem_colorida):
     return resultado
 
 
-def extrair_features(caminho_imagem, tamanho_padrao=(512, 512)):
+def extrair_features(caminho_imagem, tamanho_maximo=512):
     """FUNCAO PRINCIPAL: recebe o caminho de uma imagem e devolve
     um dicionario com todas as features calculadas.
 
-    IMPORTANTE: a imagem e redimensionada pra um tamanho fixo ANTES de
-    calcular qualquer feature. Isso evita que diferencas de resolucao
-    entre geradores (ex: GPT gerando imagens maiores que o Gemini)
-    influenciem o resultado por engano -- sem isso, o modelo poderia
-    aprender a diferenciar pelo TAMANHO da imagem, nao pelas
-    caracteristicas reais de manipulacao, o que tornaria a comparacao
-    entre geradores injusta."""
+    IMPORTANTE sobre redimensionamento: imagens MAIORES que
+    tamanho_maximo sao reduzidas, pra evitar que geradores que
+    produzem imagens muito grandes (ex: GPT) tenham vantagem
+    artificial nas features so por causa do tamanho.
+
+    Imagens MENORES ou iguais a tamanho_maximo NAO sao ampliadas.
+    Ampliar (upscale) borraria a imagem e destruiria o ruido real
+    de sensor de camera -- que e justamente o sinal mais importante
+    pra diferenciar foto real de imagem gerada. Ampliar fotos reais
+    comprimidas faria elas parecerem 'lisas demais', confundindo o
+    modelo a favor de classifica-las como IA por engano."""
     imagem = cv2.imread(caminho_imagem)
 
     if imagem is None:
         return None
 
-    imagem = cv2.resize(imagem, tamanho_padrao, interpolation=cv2.INTER_AREA)
+    altura, largura = imagem.shape[:2]
+    maior_lado = max(altura, largura)
+
+    if maior_lado > tamanho_maximo:
+        escala = tamanho_maximo / maior_lado
+        nova_largura = int(largura * escala)
+        nova_altura = int(altura * escala)
+        imagem = cv2.resize(imagem, (nova_largura, nova_altura), interpolation=cv2.INTER_AREA)
+    # se for menor ou igual, mantem o tamanho original -- sem upscale
+
 
     cinza = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY)
 
