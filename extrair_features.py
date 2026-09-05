@@ -49,13 +49,23 @@ def feature_histograma_cor(imagem_colorida):
     return resultado
 
 
-def extrair_features(caminho_imagem):
+def extrair_features(caminho_imagem, tamanho_padrao=(512, 512)):
     """FUNCAO PRINCIPAL: recebe o caminho de uma imagem e devolve
-    um dicionario com todas as features calculadas."""
+    um dicionario com todas as features calculadas.
+
+    IMPORTANTE: a imagem e redimensionada pra um tamanho fixo ANTES de
+    calcular qualquer feature. Isso evita que diferencas de resolucao
+    entre geradores (ex: GPT gerando imagens maiores que o Gemini)
+    influenciem o resultado por engano -- sem isso, o modelo poderia
+    aprender a diferenciar pelo TAMANHO da imagem, nao pelas
+    caracteristicas reais de manipulacao, o que tornaria a comparacao
+    entre geradores injusta."""
     imagem = cv2.imread(caminho_imagem)
 
     if imagem is None:
         return None
+
+    imagem = cv2.resize(imagem, tamanho_padrao, interpolation=cv2.INTER_AREA)
 
     cinza = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY)
 
