@@ -9,6 +9,7 @@ Para rodar: streamlit run app.py
 """
 
 import os
+import uuid
 import streamlit as st
 from PIL import Image
 import joblib
@@ -97,7 +98,9 @@ with aba_adicionar:
         if st.button(f"Salvar {len(arquivos_novos)} imagem(ns) como '{categoria}'"):
             for arquivo in arquivos_novos:
                 imagem_pil = Image.open(arquivo).convert("RGB")
-                caminho_salvar = os.path.join(pasta_destino, arquivo.name)
+                nome_base, extensao = os.path.splitext(arquivo.name)
+                nome_unico = f"{nome_base}_{uuid.uuid4().hex[:8]}{extensao}"
+                caminho_salvar = os.path.join(pasta_destino, nome_unico)
                 imagem_pil.save(caminho_salvar)
             st.success(f"{len(arquivos_novos)} imagem(ns) salva(s) em '{pasta_destino}'.")
 
@@ -189,6 +192,16 @@ with aba_resultados:
             file_name="acuracia_por_gerador.csv",
             mime="text/csv",
         )
+
+        st.write("### Matriz de confusao")
+        st.caption("Mostra onde o modelo acerta e onde confunde real com IA (e vice-versa)")
+        matriz = resultado["matriz_confusao"]
+        tabela_matriz = pd.DataFrame(
+            matriz,
+            index=["Real de fato: IA", "Real de fato: Real"],
+            columns=["Previsto: IA", "Previsto: Real"],
+        )
+        st.table(tabela_matriz)
 
         with st.expander("Ver relatorio tecnico completo"):
             st.text(resultado["relatorio_texto"])

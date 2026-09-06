@@ -10,7 +10,7 @@ import time
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold, cross_val_score, cross_val_predict
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import joblib
 
 
@@ -75,6 +75,12 @@ def treinar(caminho_csv="dataset.csv", caminho_modelo="modelo.pkl", k_folds=5):
         resultado_completo["y_real"], resultado_completo["y_previsto"], target_names=["IA", "Real"]
     )
 
+    matriz_confusao = confusion_matrix(
+        resultado_completo["y_real"], resultado_completo["y_previsto"], labels=[0, 1]
+    ).tolist()
+    # matriz_confusao[i][j] = quantidade de imagens que sao DE VERDADE a classe i
+    # mas foram PREVISTAS como classe j. labels=[0,1] -> 0=IA, 1=Real
+
     resultado = {
         "tempo_treino": tempo_treino,
         "acuracia_geral": acuracia_geral,
@@ -85,6 +91,7 @@ def treinar(caminho_csv="dataset.csv", caminho_modelo="modelo.pkl", k_folds=5):
         "cv_scores": scores_cv.tolist(),
         "cv_media": scores_cv.mean(),
         "cv_desvio_padrao": scores_cv.std(),
+        "matriz_confusao": matriz_confusao,
     }
 
     print(f"\nTempo total (validacao cruzada): {tempo_treino:.4f} segundos")
@@ -96,6 +103,10 @@ def treinar(caminho_csv="dataset.csv", caminho_modelo="modelo.pkl", k_folds=5):
     print("Acuracia separada por gerador (usando TODAS as imagens de cada um):")
     for nome, dados_gerador in acuracia_por_gerador.items():
         print(f"  {nome}: {dados_gerador['acuracia']:.1f}% ({dados_gerador['acertos']}/{dados_gerador['total']})")
+    print("\nMatriz de confusao:")
+    print(f"                  Previsto: IA   Previsto: Real")
+    print(f"  Real de fato: IA      {matriz_confusao[0][0]:^12} {matriz_confusao[0][1]:^12}")
+    print(f"  Real de fato: Real    {matriz_confusao[1][0]:^12} {matriz_confusao[1][1]:^12}")
     print("\nImportancia de cada feature:")
     for nome, importancia in importancias:
         print(f"  {nome}: {importancia:.4f}")
