@@ -138,13 +138,31 @@ with aba_adicionar:
                     "qtd_real": contagens["Real"],
                     "qtd_gpt": contagens["GPT"],
                     "qtd_gemini": contagens["Gemini"],
-                    "acuracia_geral": round(resultado["acuracia_geral"] * 100, 1),
+                    "acuracia_media_geral": round(resultado["media_geral"] * 100, 1),
                 }
-                for nome_gerador, dados_gerador in resultado["acuracia_por_gerador"].items():
-                    linha_historico[f"acuracia_{nome_gerador}"] = round(dados_gerador["acuracia"], 1)
+                for nome_gerador, media in resultado["media_por_gerador"].items():
+                    linha_historico[f"acuracia_media_{nome_gerador}"] = round(media, 1)
+                for nome_algoritmo, dados_alg in resultado["resultados_por_algoritmo"].items():
+                    linha_historico[f"acuracia_{nome_algoritmo}"] = round(dados_alg["acuracia_geral"] * 100, 1)
 
                 caminho_historico = "historico_resultados.csv"
                 df_nova_linha = pd.DataFrame([linha_historico])
+
+                formato_mudou = False
+                if os.path.exists(caminho_historico):
+                    try:
+                        colunas_antigas = list(pd.read_csv(caminho_historico, nrows=0).columns)
+                        if colunas_antigas != list(df_nova_linha.columns):
+                            formato_mudou = True
+                    except Exception:
+                        formato_mudou = True
+
+                if formato_mudou:
+                    marca_tempo = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    nome_backup = f"historico_resultados_antigo_{marca_tempo}.csv"
+                    os.rename(caminho_historico, nome_backup)
+                    st.info(f"O formato do historico mudou -- o arquivo antigo foi salvo como '{nome_backup}', e um novo historico foi iniciado.")
+
                 if os.path.exists(caminho_historico):
                     df_nova_linha.to_csv(caminho_historico, mode="a", header=False, index=False)
                 else:
@@ -160,63 +178,93 @@ with aba_resultados:
         st.info("Ainda nao ha resultado nessa sessao. Va na aba 'Adicionar ao dataset' e clique em 'Retreinar modelo'.")
     else:
         resultado = st.session_state["ultimo_resultado"]
+        resultados_por_algoritmo = resultado["resultados_por_algoritmo"]
 
-        col1, col2 = st.columns(2)
-        col1.metric("Acuracia geral", f"{resultado['acuracia_geral']*100:.1f}%")
-        col2.metric("Tempo de treino", f"{resultado['tempo_treino']:.3f}s")
+        # ---- RESUMO: tabela comparando todos os algoritmos + media ----
+        st.write("### Comparacao entre algoritmos")
+        linhas_resumo = []
+        for nome_algoritmo, dados_alg in resultados_por_algoritmo.items():
+            linha = {"Algoritmo": nome_algoritmo, "Acuracia geral (%)": f"{dados_alg['acuracia_geral']*100:.1f}"}
+            for nome_gerador, dados_gerador in dados_alg["acuracia_por_gerador"].items():
+                linha[f"{nome_gerador} (%)"] = f"{dados_gerador['acuracia']:.1f}"
+            linhas_resumo.append(linha)
 
-        st.write("### Acuracia por gerador")
-        tabela_geradores = pd.DataFrame([
-            {
-                "Gerador": nome,
-                "Acuracia (%)": f"{dados['acuracia']:.1f}",
-                "Acertos": f"{dados['acertos']}/{dados['total']}",
-            }
-            for nome, dados in resultado["acuracia_por_gerador"].items()
-        ])
-        st.table(tabela_geradores)
+        linha_media = {"Algoritmo": "MEDIA", "Acuracia geral (%)": f"{resultado['media_geral']*100:.1f}"}
+        for nome_gerador, media in resultado["media_por_gerador"].items():
+            linha_media[f"{nome_gerador} (%)"] = f"{media:.1f}"
+        linhas_resumo.append(linha_media)
 
-        grafico_dados = pd.DataFrame({
-            nome: [dados["acuracia"]]
-            for nome, dados in resultado["acuracia_por_gerador"].items()
-        }, index=["Acuracia (%)"]).T
-        st.bar_chart(grafico_dados)
-
-        st.write("### Importancia de cada caracteristica (feature)")
-        tabela_features = pd.DataFrame(resultado["importancias"], columns=["Feature", "Importancia"])
-        st.bar_chart(tabela_features.set_index("Feature"))
+        tabela_resumo = pd.DataFrame(linhas_resumo)
+        st.table(tabela_resumo)
 
         st.download_button(
-            "Baixar tabela de acuracia por gerador (CSV)",
-            data=tabela_geradores.to_csv(index=False),
-            file_name="acuracia_por_gerador.csv",
+            "Baixar comparacao entre algoritmos (CSV)",
+            data=tabela_resumo.to_csv(index=False),
+            file_name="comparacao_algoritmos.csv",
             mime="text/csv",
         )
 
-        st.write("### Matriz de confusao")
-        st.caption("Mostra onde o modelo acerta e onde confunde real com IA (e vice-versa)")
-        matriz = resultado["matriz_confusao"]
-        tabela_matriz = pd.DataFrame(
-            matriz,
-            index=["Real de fato: IA", "Real de fato: Real"],
-            columns=["Previsto: IA", "Previsto: Real"],
-        )
-        st.table(tabela_matriz)
+        st.divider()
 
-        with st.expander("Ver relatorio tecnico completo"):
-            st.text(resultado["relatorio_texto"])
+        # ---- DETALHE POR ALGORITMO: tabela + grafico + matriz de confusao ----
+        st.write("### Detalhes por algoritmo")
+        abas_algoritmos = st.tabs(list(resultados_por_algoritmo.keys()))
+
+        for aba, (nome_algoritmo, dados_alg) in zip(abas_algoritmos, resultados_por_algoritmo.items()):
+            with aba:
+                col1, col2 = st.columns(2)
+                col1.metric("Acuracia geral", f"{dados_alg['acuracia_geral']*100:.1f}%")
+                col2.metric("Tempo (validacao cruzada)", f"{dados_alg['tempo']:.3f}s")
+
+                tabela_geradores = pd.DataFrame([
+                    {
+                        "Gerador": nome,
+                        "Acuracia (%)": f"{dados['acuracia']:.1f}",
+                        "Acertos": f"{dados['acertos']}/{dados['total']}",
+                    }
+                    for nome, dados in dados_alg["acuracia_por_gerador"].items()
+                ])
+                st.table(tabela_geradores)
+
+                grafico_dados = pd.DataFrame({
+                    nome: [dados["acuracia"]]
+                    for nome, dados in dados_alg["acuracia_por_gerador"].items()
+                }, index=["Acuracia (%)"]).T
+                st.bar_chart(grafico_dados)
+
+                st.write("##### Matriz de confusao")
+                matriz = dados_alg["matriz_confusao"]
+                tabela_matriz = pd.DataFrame(
+                    matriz,
+                    index=["Real de fato: IA", "Real de fato: Real"],
+                    columns=["Previsto: IA", "Previsto: Real"],
+                )
+                st.table(tabela_matriz)
+
+                with st.expander("Ver relatorio tecnico completo"):
+                    st.text(dados_alg["relatorio_texto"])
+
+        st.divider()
+
+        st.write("### Importancia de cada caracteristica (feature)")
+        st.caption("Calculada a partir do modelo final (Random Forest)")
+        tabela_features = pd.DataFrame(resultado["importancias"], columns=["Feature", "Importancia"])
+        st.bar_chart(tabela_features.set_index("Feature"))
 
         st.divider()
         st.write("### Historico de todos os treinos (evolucao ao longo do tempo)")
         caminho_historico = "historico_resultados.csv"
         if os.path.exists(caminho_historico):
-            df_historico = pd.read_csv(caminho_historico)
-            st.dataframe(df_historico)
-            st.download_button(
-                "Baixar historico completo (CSV)",
-                data=df_historico.to_csv(index=False),
-                file_name="historico_resultados.csv",
-                mime="text/csv",
-            )
+            try:
+                df_historico = pd.read_csv(caminho_historico)
+                st.dataframe(df_historico)
+                st.download_button(
+                    "Baixar historico completo (CSV)",
+                    data=df_historico.to_csv(index=False),
+                    file_name="historico_resultados.csv",
+                    mime="text/csv",
+                )
+            except Exception as erro:
+                st.warning(f"Nao foi possivel ler o historico ({erro}). Ele pode estar num formato antigo/corrompido.")
         else:
             st.info("Ainda sem historico salvo.")

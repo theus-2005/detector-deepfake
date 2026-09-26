@@ -1,44 +1,51 @@
 """
 treinar_modelo.py
 
-Le o dataset.csv, treina um classificador, e devolve os resultados
-(incluindo acuracia por gerador calculada via validacao cruzada,
-para ser confiavel mesmo com poucas imagens).
+Le o dataset.csv, treina VARIOS algoritmos diferentes (Random Forest,
+SVM, Gradient Boosting, Regressao Logistica), e devolve os resultados
+de cada um separadamente -- acuracia geral, por gerador, matriz de
+confusao -- alem da media entre todos os algoritmos.
+
+O Random Forest continua sendo o modelo FINAL salvo (modelo.pkl),
+usado pra prever imagens novas no app.
 """
 
 import time
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import StratifiedKFold, cross_val_score, cross_val_predict
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import joblib
 
 
-def treinar(caminho_csv="dataset.csv", caminho_modelo="modelo.pkl", k_folds=5):
-    dados = pd.read_csv(caminho_csv)
+def construir_algoritmos():
+    """Devolve um dicionario {nome: modelo} com os 4 algoritmos a comparar.
 
-    X = dados.drop(columns=["rotulo", "gerador"])
-    y = dados["rotulo"]
-    gerador = dados["gerador"]
+    SVM e Regressao Logistica sao sensiveis a escala dos numeros de entrada,
+    entao usamos um StandardScaler (padroniza os numeros) antes deles --
+    isso nao muda a informacao, so evita que uma feature com numeros
+    grandes (tipo hist_b_media, que vai ate 255) domine uma feature com
+    numeros pequenos (tipo ruido) so por causa da escala.
+    """
+    return {
+        "Random Forest": RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced"),
+        "Gradient Boosting": GradientBoostingClassifier(n_estimators=200, random_state=42),
+        "SVM": make_pipeline(StandardScaler(), SVC(class_weight="balanced", random_state=42)),
+        "Regressao Logistica": make_pipeline(StandardScaler(), LogisticRegression(class_weight="balanced", max_iter=1000, random_state=42)),
+    }
 
-    # k_folds nao pode ser maior que a quantidade de imagens da menor classe
-    menor_classe = y.value_counts().min()
-    k_folds_ajustado = min(k_folds, menor_classe)
 
-    modelo_cv = RandomForestClassifier(n_estimators=200, random_state=42)
-    validador = StratifiedKFold(n_splits=k_folds_ajustado, shuffle=True, random_state=42)
-
-    # acuracia geral via validacao cruzada (media dos folds)
+def avaliar_algoritmo(modelo, X, y, gerador, validador):
+    """Treina/avalia UM algoritmo via validacao cruzada e devolve
+    um dicionario com todos os resultados dele."""
     inicio = time.time()
-    scores_cv = cross_val_score(modelo_cv, X, y, cv=validador, scoring="accuracy")
-    tempo_treino = time.time() - inicio
-
-    # ---- ACURACIA POR GERADOR, usando TODAS as imagens ----
-    # cross_val_predict devolve uma previsao pra CADA imagem do dataset,
-    # sempre usando um modelo que nao viu aquela imagem durante o treino
-    # (assim nao ha "cola", mas aproveitamos 100% dos dados pra avaliar,
-    # em vez de so os 20% que sobrariam num split unico)
-    predicoes_cv = cross_val_predict(modelo_cv, X, y, cv=validador)
+    scores_cv = cross_val_score(modelo, X, y, cv=validador, scoring="accuracy")
+    predicoes_cv = cross_val_predict(modelo, X, y, cv=validador)
+    tempo = time.time() - inicio
 
     resultado_completo = pd.DataFrame({
         "y_real": y.values,
@@ -57,62 +64,89 @@ def treinar(caminho_csv="dataset.csv", caminho_modelo="modelo.pkl", k_folds=5):
             "total": total,
         }
 
-    acuracia_geral = accuracy_score(resultado_completo["y_real"], resultado_completo["y_previsto"])
+    matriz_confusao = confusion_matrix(
+        resultado_completo["y_real"], resultado_completo["y_previsto"], labels=[0, 1]
+    ).tolist()
 
-    # ---- MODELO FINAL, treinado com TODOS os dados (pra salvar e usar depois) ----
-    modelo_final = RandomForestClassifier(n_estimators=200, random_state=42)
+    return {
+        "tempo": tempo,
+        "cv_media": scores_cv.mean(),
+        "cv_desvio_padrao": scores_cv.std(),
+        "acuracia_geral": accuracy_score(resultado_completo["y_real"], resultado_completo["y_previsto"]),
+        "acuracia_por_gerador": acuracia_por_gerador,
+        "matriz_confusao": matriz_confusao,
+        "relatorio_texto": classification_report(
+            resultado_completo["y_real"], resultado_completo["y_previsto"], target_names=["IA", "Real"]
+        ),
+    }
+
+
+def treinar(caminho_csv="dataset.csv", caminho_modelo="modelo.pkl", k_folds=5):
+    dados = pd.read_csv(caminho_csv)
+
+    X = dados.drop(columns=["rotulo", "gerador"])
+    y = dados["rotulo"]
+    gerador = dados["gerador"]
+
+    menor_classe = y.value_counts().min()
+    k_folds_ajustado = min(k_folds, menor_classe)
+    validador = StratifiedKFold(n_splits=k_folds_ajustado, shuffle=True, random_state=42)
+
+    algoritmos = construir_algoritmos()
+    resultados_por_algoritmo = {}
+
+    print(f"Avaliando {len(algoritmos)} algoritmos com validacao cruzada de {k_folds_ajustado} folds...\n")
+
+    for nome, modelo in algoritmos.items():
+        print(f"--- {nome} ---")
+        resultado_alg = avaliar_algoritmo(modelo, X, y, gerador, validador)
+        resultados_por_algoritmo[nome] = resultado_alg
+
+        print(f"Tempo: {resultado_alg['tempo']:.4f}s | Acuracia geral: {resultado_alg['acuracia_geral']*100:.1f}%")
+        for nome_gerador, dados_gerador in resultado_alg["acuracia_por_gerador"].items():
+            print(f"  {nome_gerador}: {dados_gerador['acuracia']:.1f}% ({dados_gerador['acertos']}/{dados_gerador['total']})")
+        print()
+
+    # ---- MEDIA entre todos os algoritmos, por gerador ----
+    todos_geradores = set()
+    for resultado_alg in resultados_por_algoritmo.values():
+        todos_geradores.update(resultado_alg["acuracia_por_gerador"].keys())
+
+    media_por_gerador = {}
+    for nome_gerador in todos_geradores:
+        valores = [
+            resultado_alg["acuracia_por_gerador"][nome_gerador]["acuracia"]
+            for resultado_alg in resultados_por_algoritmo.values()
+            if nome_gerador in resultado_alg["acuracia_por_gerador"]
+        ]
+        media_por_gerador[nome_gerador] = sum(valores) / len(valores)
+
+    media_geral = sum(r["acuracia_geral"] for r in resultados_por_algoritmo.values()) / len(resultados_por_algoritmo)
+
+    print("--- MEDIA ENTRE TODOS OS ALGORITMOS ---")
+    print(f"Acuracia geral media: {media_geral*100:.1f}%")
+    for nome_gerador, media in media_por_gerador.items():
+        print(f"  {nome_gerador}: {media:.1f}%")
+
+    # ---- MODELO FINAL salvo (Random Forest, treinado com 100% dos dados) ----
+    modelo_final = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
     modelo_final.fit(X, y)
-
     importancias = sorted(
         zip(X.columns, modelo_final.feature_importances_),
         key=lambda item: item[1],
         reverse=True,
     )
-
     joblib.dump(modelo_final, caminho_modelo)
 
-    relatorio_texto = classification_report(
-        resultado_completo["y_real"], resultado_completo["y_previsto"], target_names=["IA", "Real"]
-    )
+    print(f"\nModelo final (Random Forest, 100% dos dados) salvo em '{caminho_modelo}'")
 
-    matriz_confusao = confusion_matrix(
-        resultado_completo["y_real"], resultado_completo["y_previsto"], labels=[0, 1]
-    ).tolist()
-    # matriz_confusao[i][j] = quantidade de imagens que sao DE VERDADE a classe i
-    # mas foram PREVISTAS como classe j. labels=[0,1] -> 0=IA, 1=Real
-
-    resultado = {
-        "tempo_treino": tempo_treino,
-        "acuracia_geral": acuracia_geral,
-        "acuracia_por_gerador": acuracia_por_gerador,
+    return {
+        "resultados_por_algoritmo": resultados_por_algoritmo,
+        "media_por_gerador": media_por_gerador,
+        "media_geral": media_geral,
         "importancias": importancias,
-        "relatorio_texto": relatorio_texto,
         "cv_k_folds": k_folds_ajustado,
-        "cv_scores": scores_cv.tolist(),
-        "cv_media": scores_cv.mean(),
-        "cv_desvio_padrao": scores_cv.std(),
-        "matriz_confusao": matriz_confusao,
     }
-
-    print(f"\nTempo total (validacao cruzada): {tempo_treino:.4f} segundos")
-    print(f"\n--- Validacao cruzada ({k_folds_ajustado}-fold) ---")
-    print(f"Acuracias em cada fold: {[f'{s*100:.1f}%' for s in scores_cv]}")
-    print(f"Media: {scores_cv.mean()*100:.1f}% (desvio padrao: {scores_cv.std()*100:.1f}%)")
-    print(f"\nAcuracia GERAL (usando todas as imagens via validacao cruzada): {acuracia_geral*100:.1f}%")
-    print(f"\n{relatorio_texto}")
-    print("Acuracia separada por gerador (usando TODAS as imagens de cada um):")
-    for nome, dados_gerador in acuracia_por_gerador.items():
-        print(f"  {nome}: {dados_gerador['acuracia']:.1f}% ({dados_gerador['acertos']}/{dados_gerador['total']})")
-    print("\nMatriz de confusao:")
-    print(f"                  Previsto: IA   Previsto: Real")
-    print(f"  Real de fato: IA      {matriz_confusao[0][0]:^12} {matriz_confusao[0][1]:^12}")
-    print(f"  Real de fato: Real    {matriz_confusao[1][0]:^12} {matriz_confusao[1][1]:^12}")
-    print("\nImportancia de cada feature:")
-    for nome, importancia in importancias:
-        print(f"  {nome}: {importancia:.4f}")
-    print(f"\nModelo salvo em '{caminho_modelo}' (treinado com 100% dos dados)")
-
-    return resultado
 
 
 if __name__ == "__main__":
