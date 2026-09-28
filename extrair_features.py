@@ -49,6 +49,57 @@ def feature_histograma_cor(imagem_colorida):
     return resultado
 
 
+def feature_ela(imagem_colorida, qualidade=90):
+    """ELA (Error Level Analysis): salva a imagem de novo como JPEG com
+    qualidade fixa (so na memoria) e mede o quanto ela mudou.
+    Imagens com historico de compressao/ruido diferentes reagem de forma
+    diferente a essa recompressao. Devolve media e desvio padrao da diferenca."""
+    ok, buffer = cv2.imencode(".jpg", imagem_colorida, [cv2.IMWRITE_JPEG_QUALITY, qualidade])
+    recomprimida = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    diferenca = cv2.absdiff(imagem_colorida, recomprimida).astype(np.float64)
+    return diferenca.mean(), diferenca.std()
+
+
+def _codigos_uniformes():
+    """Marca quais dos 256 codigos LBP sao 'uniformes' (no maximo 2
+    trocas entre 0 e 1 quando se le os 8 bits em circulo)."""
+    uniformes = np.zeros(256, dtype=bool)
+    for codigo in range(256):
+        girado = ((codigo << 1) | (codigo >> 7)) & 0xFF
+        trocas = bin(codigo ^ girado).count("1")
+        uniformes[codigo] = trocas <= 2
+    return uniformes
+
+
+_UNIFORMES = _codigos_uniformes()
+
+
+def feature_lbp(imagem_cinza):
+    """LBP (Local Binary Pattern): pra cada pixel, compara ele com os 8
+    vizinhos (vizinho >= centro vira 1, senao 0) e forma um codigo de 8 bits.
+    Depois resume a distribuicao desses codigos em 3 numeros:
+    entropia (quao variada e a textura), fracao de padroes uniformes
+    (bordas/cantos regulares) e fracao de padroes planos (todos 0 ou todos 1)."""
+    c = imagem_cinza.astype(np.int16)
+    centro = c[1:-1, 1:-1]
+    vizinhos = [
+        c[:-2, :-2], c[:-2, 1:-1], c[:-2, 2:], c[1:-1, 2:],
+        c[2:, 2:], c[2:, 1:-1], c[2:, :-2], c[1:-1, :-2],
+    ]
+    codigo = np.zeros(centro.shape, dtype=np.uint8)
+    for i, vizinho in enumerate(vizinhos):
+        codigo |= ((vizinho >= centro).astype(np.uint8) << i)
+
+    hist = np.bincount(codigo.ravel(), minlength=256).astype(np.float64)
+    hist /= hist.sum()
+
+    nao_zero = hist[hist > 0]
+    entropia = -(nao_zero * np.log2(nao_zero)).sum()
+    uniformes = hist[_UNIFORMES].sum()
+    planos = hist[0] + hist[255]
+    return entropia, uniformes, planos
+
+
 def extrair_features(caminho_imagem, tamanho_maximo=512):
     """FUNCAO PRINCIPAL: recebe o caminho de uma imagem e devolve
     um dicionario com todas as features calculadas.
@@ -85,6 +136,8 @@ def extrair_features(caminho_imagem, tamanho_maximo=512):
     ruido = feature_ruido(cinza)
     frequencia = feature_frequencia(cinza)
     hist_b_media, hist_b_std, hist_g_media, hist_g_std, hist_r_media, hist_r_std = feature_histograma_cor(imagem)
+    ela_media, ela_std = feature_ela(imagem)
+    lbp_entropia, lbp_uniformes, lbp_planos = feature_lbp(cinza)
 
     return {
         "ruido": float(ruido),
@@ -95,6 +148,11 @@ def extrair_features(caminho_imagem, tamanho_maximo=512):
         "hist_g_std": float(hist_g_std),
         "hist_r_media": float(hist_r_media),
         "hist_r_std": float(hist_r_std),
+        "ela_media": float(ela_media),
+        "ela_std": float(ela_std),
+        "lbp_entropia": float(lbp_entropia),
+        "lbp_uniformes": float(lbp_uniformes),
+        "lbp_planos": float(lbp_planos),
     }
 
 
