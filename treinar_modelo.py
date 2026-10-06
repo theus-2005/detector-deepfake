@@ -140,6 +140,12 @@ def treinar(caminho_csv="dataset.csv", caminho_modelo="modelo.pkl", k_folds=5):
 
     print(f"\nModelo final (Random Forest, 100% dos dados) salvo em '{caminho_modelo}'")
 
+    # === COLOQUE ESTE BLOCO AQUI PARA VER AS FEATURES NO TERMINAL ===
+    print("\n=== IMPORTÂNCIA DAS FEATURES (Quais ajudaram mais o modelo) ===")
+    for nome_feat, peso in importancias:
+        print(f"  {nome_feat}: {peso*100:.2f}%")
+    print("===============================================================\n")
+
     return {
         "resultados_por_algoritmo": resultados_por_algoritmo,
         "media_por_gerador": media_por_gerador,

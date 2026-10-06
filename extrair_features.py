@@ -7,6 +7,7 @@ Essas features depois viram uma linha na tabela que a IA vai treinar em cima.
 
 import cv2
 import numpy as np
+import pywt
 
 
 def feature_ruido(imagem_cinza):
@@ -100,6 +101,20 @@ def feature_lbp(imagem_cinza):
     return entropia, uniformes, planos
 
 
+def feature_wavelet(imagem_cinza):
+    """Wavelet (transformada de Haar, 1 nivel): separa a imagem em 4 partes:
+    uma versao 'resumida' (aproximacao, ignorada aqui) e 3 'mapas de detalhe'
+    -- horizontal, vertical e diagonal -- que capturam borda/textura em
+    cada direcao. Imagens de IA tendem a ter menos energia nesses mapas
+    (mais uma vez, o efeito de serem 'lisas demais').
+    Devolve a energia (media dos valores ao quadrado) de cada mapa."""
+    _, (detalhe_h, detalhe_v, detalhe_d) = pywt.dwt2(imagem_cinza.astype(np.float64), "haar")
+    energia_h = np.mean(detalhe_h ** 2)
+    energia_v = np.mean(detalhe_v ** 2)
+    energia_d = np.mean(detalhe_d ** 2)
+    return energia_h, energia_v, energia_d
+
+
 def extrair_features(caminho_imagem, tamanho_maximo=512):
     """FUNCAO PRINCIPAL: recebe o caminho de uma imagem e devolve
     um dicionario com todas as features calculadas.
@@ -138,6 +153,7 @@ def extrair_features(caminho_imagem, tamanho_maximo=512):
     hist_b_media, hist_b_std, hist_g_media, hist_g_std, hist_r_media, hist_r_std = feature_histograma_cor(imagem)
     ela_media, ela_std = feature_ela(imagem)
     lbp_entropia, lbp_uniformes, lbp_planos = feature_lbp(cinza)
+    wavelet_h, wavelet_v, wavelet_d = feature_wavelet(cinza)
 
     return {
         "ruido": float(ruido),
@@ -153,6 +169,9 @@ def extrair_features(caminho_imagem, tamanho_maximo=512):
         "lbp_entropia": float(lbp_entropia),
         "lbp_uniformes": float(lbp_uniformes),
         "lbp_planos": float(lbp_planos),
+        "wavelet_h": float(wavelet_h),
+        "wavelet_v": float(wavelet_v),
+        "wavelet_d": float(wavelet_d),
     }
 
 
@@ -163,10 +182,31 @@ if __name__ == "__main__":
         print("Uso: python extrair_features.py caminho/da/imagem.jpg")
         sys.exit(1)
 
-    resultado = extrair_features(sys.argv[1])
-    if resultado is None:
+    caminho = sys.argv[1]
+    imagem = cv2.imread(caminho)
+    
+    if imagem is None:
         print("Nao consegui abrir a imagem. Confira o caminho.")
-    else:
-        print("\nFeatures extraidas:")
+        sys.exit(1)
+        
+    cinza = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY)
+
+    # Testando diretamente as tres que voce quer ver
+    print("\n--- TESTANDO LABELS ESPECIFICAS ---")
+    
+    ela_m, ela_s = feature_ela(imagem)
+    print(f"ELA (Media / Desvio): {ela_m:.4f} / {ela_s:.4f}")
+    
+    lbp_e, lbp_u, lbp_p = feature_lbp(cinza)
+    print(f"LBP (Entropia / Uniformes / Planos): {lbp_e:.4f} / {lbp_u:.4f} / {lbp_p:.4f}")
+    
+    w_h, w_v, w_d = feature_wavelet(cinza)
+    print(f"Wavelet (Horizontal / Vertical / Diagonal): {w_h:.4f} / {w_v:.4f} / {w_d:.4f}")
+    print("-----------------------------------\n")
+
+    # Execucao do dicionario completo
+    resultado = extrair_features(caminho)
+    if resultado is not None:
+        print("Todas as features salvas no dicionario:")
         for chave, valor in resultado.items():
             print(f"  {chave}: {valor:.4f}")
