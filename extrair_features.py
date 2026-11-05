@@ -5,6 +5,8 @@ Pega UMA imagem e transforma ela em uma lista de numeros (features).
 Essas features depois viram uma linha na tabela que a IA vai treinar em cima.
 """
 
+import os
+
 import cv2
 import numpy as np
 import pywt
@@ -115,9 +117,53 @@ def feature_wavelet(imagem_cinza):
     return energia_h, energia_v, energia_d
 
 
-def extrair_features(caminho_imagem, tamanho_maximo=512):
+def padronizar_compressao(imagem, qualidade=95):
+    """Controle de formato/compressao: passa TODA imagem (foto real ou
+    gerada, JPG, PNG ou WebP) pela mesma recompressao JPEG em memoria,
+    pra que o historico de compressao de cada arquivo nao seja o que o
+    modelo aprende (o professor apontou que ELA, ruido e FFT sao sensiveis
+    a isso). Nao elimina 100% a diferenca, por isso o treino tambem roda
+    um 'controle' so com metadados (veja treinar_modelo.py)."""
+    ok, buffer = cv2.imencode(".jpg", imagem, [cv2.IMWRITE_JPEG_QUALITY, qualidade])
+    return cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+
+
+def metadados_arquivo(caminho_imagem):
+    """Devolve largura/altura ORIGINAIS, tamanho em KB e formato do arquivo
+    (antes de qualquer redimensionamento). Servem so pro controle de
+    confusao (confound) -- NAO entram como feature do modelo final."""
+    imagem = cv2.imread(caminho_imagem)
+    if imagem is None:
+        return None
+    altura, largura = imagem.shape[:2]
+    return {
+        "largura_orig": int(largura),
+        "altura_orig": int(altura),
+        "tamanho_kb": round(os.path.getsize(caminho_imagem) / 1024, 1),
+        "formato": os.path.splitext(caminho_imagem)[1].lower().lstrip(".").replace("jpeg", "jpg").replace("jfif", "jpg"),
+    }
+
+
+def extrair_features(caminho_imagem, tamanho_maximo=512, padronizar=True, recorte_fixo=True):
     """FUNCAO PRINCIPAL: recebe o caminho de uma imagem e devolve
     um dicionario com todas as features calculadas.
+
+    recorte_fixo=True: TODA imagem vira um quadrado de 512x512 (o lado
+    menor e reduzido pra 512, sem ampliar, e depois corta-se o centro).
+    Assim fotos e imagens geradas chegam com a MESMA dimensao e proporcao,
+    e o tamanho/formato original deixa de ser pista. Se uma imagem tiver
+    lado menor que 512, ela e so cortada em quadrado (sem ampliar).
+    Com recorte_fixo=False vale o comportamento antigo (so reduz se o
+    maior lado passar de 512).
+
+    padronizar=True: aplica a mesma recompressao JPEG (qualidade 95) em
+    todas as imagens, depois do redimensionamento, pra reduzir a
+    diferenca de formato/compressao entre fotos e imagens geradas.
+
+    Cinza x cor: ruido, freq_alta, lbp_* e wavelet_* usam a imagem em
+    TONS DE CINZA; hist_* (6 numeros de cor) e ela_* usam a imagem
+    COLORIDA (BGR). A conversao pra cinza so acontece pras features que
+    dependem de luminosidade.
 
     IMPORTANTE sobre redimensionamento: imagens MAIORES que
     tamanho_maximo sao reduzidas, pra evitar que geradores que
@@ -138,13 +184,25 @@ def extrair_features(caminho_imagem, tamanho_maximo=512):
     altura, largura = imagem.shape[:2]
     maior_lado = max(altura, largura)
 
-    if maior_lado > tamanho_maximo:
+    if recorte_fixo:
+        menor_lado = min(altura, largura)
+        if menor_lado > tamanho_maximo:
+            escala = tamanho_maximo / menor_lado
+            imagem = cv2.resize(imagem, (max(tamanho_maximo, round(largura * escala)), max(tamanho_maximo, round(altura * escala))),
+                                interpolation=cv2.INTER_AREA)
+        altura, largura = imagem.shape[:2]
+        lado = min(altura, largura, tamanho_maximo)
+        y0, x0 = (altura - lado) // 2, (largura - lado) // 2
+        imagem = imagem[y0:y0 + lado, x0:x0 + lado]
+    elif maior_lado > tamanho_maximo:
         escala = tamanho_maximo / maior_lado
         nova_largura = int(largura * escala)
         nova_altura = int(altura * escala)
         imagem = cv2.resize(imagem, (nova_largura, nova_altura), interpolation=cv2.INTER_AREA)
     # se for menor ou igual, mantem o tamanho original -- sem upscale
 
+    if padronizar:
+        imagem = padronizar_compressao(imagem)
 
     cinza = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY)
 
@@ -182,31 +240,10 @@ if __name__ == "__main__":
         print("Uso: python extrair_features.py caminho/da/imagem.jpg")
         sys.exit(1)
 
-    caminho = sys.argv[1]
-    imagem = cv2.imread(caminho)
-    
-    if imagem is None:
+    resultado = extrair_features(sys.argv[1])
+    if resultado is None:
         print("Nao consegui abrir a imagem. Confira o caminho.")
-        sys.exit(1)
-        
-    cinza = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY)
-
-    # Testando diretamente as tres que voce quer ver
-    print("\n--- TESTANDO LABELS ESPECIFICAS ---")
-    
-    ela_m, ela_s = feature_ela(imagem)
-    print(f"ELA (Media / Desvio): {ela_m:.4f} / {ela_s:.4f}")
-    
-    lbp_e, lbp_u, lbp_p = feature_lbp(cinza)
-    print(f"LBP (Entropia / Uniformes / Planos): {lbp_e:.4f} / {lbp_u:.4f} / {lbp_p:.4f}")
-    
-    w_h, w_v, w_d = feature_wavelet(cinza)
-    print(f"Wavelet (Horizontal / Vertical / Diagonal): {w_h:.4f} / {w_v:.4f} / {w_d:.4f}")
-    print("-----------------------------------\n")
-
-    # Execucao do dicionario completo
-    resultado = extrair_features(caminho)
-    if resultado is not None:
-        print("Todas as features salvas no dicionario:")
+    else:
+        print("\nFeatures extraidas:")
         for chave, valor in resultado.items():
             print(f"  {chave}: {valor:.4f}")

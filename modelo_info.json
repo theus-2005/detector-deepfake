@@ -1,0 +1,60 @@
+{
+  "data_hora": "2026-11-05 17:54:37",
+  "modelo_final": "Gradient Boosting",
+  "criterio_escolha": "maior acuracia balanceada na validacao cruzada agrupada (desempate: F1 macro)",
+  "validacao": "StratifiedGroupKFold k=5",
+  "n_imagens": 300,
+  "features": [
+    "ruido",
+    "freq_alta",
+    "hist_b_media",
+    "hist_b_std",
+    "hist_g_media",
+    "hist_g_std",
+    "hist_r_media",
+    "hist_r_std",
+    "ela_media",
+    "ela_std",
+    "lbp_entropia",
+    "lbp_uniformes",
+    "lbp_planos",
+    "wavelet_h",
+    "wavelet_v",
+    "wavelet_d"
+  ],
+  "metricas_modelo_final": {
+    "acuracia_geral": 0.7333333333333333,
+    "acuracia_balanceada": 0.6924999999999999,
+    "f1_macro": 0.695292265502006,
+    "revocacao_real": 0.57
+  },
+  "limites_minimos": {
+    "acuracia_balanceada": 0.6,
+    "revocacao_real": 0.5,
+    "f1_macro": 0.55
+  },
+  "atende_limites": {
+    "acuracia_balanceada": true,
+    "revocacao_real": true,
+    "f1_macro": true
+  },
+  "controle_metadados": {
+    "acuracia_geral": 0.9933333333333333,
+    "acuracia_balanceada": 0.995,
+    "f1_macro": 0.9925369421364247,
+    "por_classe": {
+      "IA": {
+        "precisao": 1.0,
+        "revocacao": 0.99,
+        "f1": 0.9949748743718593
+      },
+      "Real": {
+        "precisao": 0.9803921568627451,
+        "revocacao": 1.0,
+        "f1": 0.9900990099009901
+      }
+    },
+    "revocacao_real": 1.0
+  },
+  "aviso": null
+}

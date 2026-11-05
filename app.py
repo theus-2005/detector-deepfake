@@ -51,7 +51,7 @@ with aba_testar:
         )
 
         if arquivo is not None:
-            caminho_temporario = "temp_teste.jpg"
+            caminho_temporario = "temp_teste.png"
             imagem_pil = Image.open(arquivo).convert("RGB")
             imagem_pil.save(caminho_temporario)
 
@@ -87,6 +87,8 @@ with aba_adicionar:
     categoria = st.radio("Essa(s) imagem(ns) e/sao de qual categoria:", list(PASTAS.keys()), key="categoria")
     pasta_destino = PASTAS[categoria]
 
+    st.caption("Dica: use o MESMO nome-base pra foto real e suas edicoes (ex.: foto001.jpg, "
+               "foto001_gpt.png, foto001_gemini.png). Isso agrupa as 3 na validacao.")
     arquivos_novos = st.file_uploader(
         "Arraste uma ou varias imagens aqui",
         type=["jpg", "jpeg", "png", "jfif", "webp"],
@@ -97,11 +99,12 @@ with aba_adicionar:
     if arquivos_novos:
         if st.button(f"Salvar {len(arquivos_novos)} imagem(ns) como '{categoria}'"):
             for arquivo in arquivos_novos:
-                imagem_pil = Image.open(arquivo).convert("RGB")
                 nome_base, extensao = os.path.splitext(arquivo.name)
                 nome_unico = f"{nome_base}_{uuid.uuid4().hex[:8]}{extensao}"
                 caminho_salvar = os.path.join(pasta_destino, nome_unico)
-                imagem_pil.save(caminho_salvar)
+                # grava os bytes ORIGINAIS (sem recomprimir), pra nao mexer na compressao do arquivo
+                with open(caminho_salvar, "wb") as destino:
+                    destino.write(arquivo.getvalue())
             st.success(f"{len(arquivos_novos)} imagem(ns) salva(s) em '{pasta_destino}'.")
 
     st.divider()
@@ -122,7 +125,7 @@ with aba_adicionar:
             st.error("Precisa de pelo menos 2 imagens reais e 2 de IA (somando GPT+Gemini) pra treinar.")
         else:
             with st.spinner("Montando dataset e treinando..."):
-                montar_dataset(
+                resumo_grupos = montar_dataset(
                     pastas_com_rotulo=[
                         (PASTAS["Real"], 1, "real"),
                         (PASTAS["GPT"], 0, "gpt"),
@@ -131,6 +134,7 @@ with aba_adicionar:
                     caminho_saida="dataset.csv",
                 )
                 resultado = treinar("dataset.csv", CAMINHO_MODELO)
+                resultado["resumo_grupos"] = resumo_grupos
                 st.session_state["ultimo_resultado"] = resultado
 
                 linha_historico = {
@@ -139,11 +143,16 @@ with aba_adicionar:
                     "qtd_gpt": contagens["GPT"],
                     "qtd_gemini": contagens["Gemini"],
                     "acuracia_media_geral": round(resultado["media_geral"] * 100, 1),
+                    "acuracia_balanceada_media": round(resultado["media_balanceada"] * 100, 1),
+                    "validacao": "agrupada por foto" if resultado["agrupado"] else "NAO agrupada",
+                    "modelo_final": resultado["modelo_final"],
                 }
                 for nome_gerador, media in resultado["media_por_gerador"].items():
                     linha_historico[f"acuracia_media_{nome_gerador}"] = round(media, 1)
                 for nome_algoritmo, dados_alg in resultado["resultados_por_algoritmo"].items():
                     linha_historico[f"acuracia_{nome_algoritmo}"] = round(dados_alg["acuracia_geral"] * 100, 1)
+                    linha_historico[f"balanceada_{nome_algoritmo}"] = round(dados_alg["acuracia_balanceada"] * 100, 1)
+                    linha_historico[f"f1_{nome_algoritmo}"] = round(dados_alg["f1_macro"] * 100, 1)
 
                 caminho_historico = "historico_resultados.csv"
                 df_nova_linha = pd.DataFrame([linha_historico])
@@ -168,7 +177,10 @@ with aba_adicionar:
                 else:
                     df_nova_linha.to_csv(caminho_historico, mode="w", header=True, index=False)
 
-            st.success("Modelo retreinado! Confira a aba 'Resultados do treino' pra ver a comparacao.")
+            if resultado.get("aviso"):
+                st.warning(resultado["aviso"])
+            st.success(f"Modelo retreinado! Modelo final: {resultado['modelo_final']}. "
+                       "Confira a aba 'Resultados do treino'.")
 
 # ---------- ABA 3: RESULTADOS DO TREINO ----------
 with aba_resultados:
@@ -182,14 +194,30 @@ with aba_resultados:
 
         # ---- RESUMO: tabela comparando todos os algoritmos + media ----
         st.write("### Comparacao entre algoritmos")
+        st.caption(
+            "Validacao cruzada "
+            + ("AGRUPADA por foto de origem" if resultado["agrupado"] else "NAO agrupada (resultado pode estar inflado)")
+            + f", {resultado['cv_k_folds']} folds. Linha de base (tudo = IA): acuracia 66,7%, acuracia balanceada 50%. "
+            f"Modelo salvo no app: **{resultado['modelo_final']}** (maior acuracia balanceada)."
+        )
+        if resultado.get("aviso"):
+            st.warning(resultado["aviso"])
         linhas_resumo = []
         for nome_algoritmo, dados_alg in resultados_por_algoritmo.items():
-            linha = {"Algoritmo": nome_algoritmo, "Acuracia geral (%)": f"{dados_alg['acuracia_geral']*100:.1f}"}
+            linha = {
+                "Algoritmo": nome_algoritmo,
+                "Acuracia geral (%)": f"{dados_alg['acuracia_geral']*100:.1f}",
+                "Acur. balanceada (%)": f"{dados_alg['acuracia_balanceada']*100:.1f}",
+                "F1 macro (%)": f"{dados_alg['f1_macro']*100:.1f}",
+                "Revocacao Real (%)": f"{dados_alg['revocacao_real']*100:.1f}",
+            }
             for nome_gerador, dados_gerador in dados_alg["acuracia_por_gerador"].items():
                 linha[f"{nome_gerador} (%)"] = f"{dados_gerador['acuracia']:.1f}"
             linhas_resumo.append(linha)
 
-        linha_media = {"Algoritmo": "MEDIA", "Acuracia geral (%)": f"{resultado['media_geral']*100:.1f}"}
+        linha_media = {"Algoritmo": "MEDIA", "Acuracia geral (%)": f"{resultado['media_geral']*100:.1f}",
+                       "Acur. balanceada (%)": f"{resultado['media_balanceada']*100:.1f}",
+                       "F1 macro (%)": "", "Revocacao Real (%)": ""}
         for nome_gerador, media in resultado["media_por_gerador"].items():
             linha_media[f"{nome_gerador} (%)"] = f"{media:.1f}"
         linhas_resumo.append(linha_media)
@@ -204,6 +232,24 @@ with aba_resultados:
             mime="text/csv",
         )
 
+        # ---- CONTROLE de metadados ----
+        controle = resultado.get("controle_metadados")
+        if controle:
+            st.write("##### Controle: classificador que ve so tamanho/formato do arquivo")
+            st.write(f"Acuracia {controle['acuracia_geral']*100:.1f}% | "
+                     f"acuracia balanceada {controle['acuracia_balanceada']*100:.1f}% "
+                     "(perto de 50% = o formato/tamanho nao entrega a classe).")
+            if controle["acuracia_balanceada"] >= 0.60:
+                st.warning("Limitacao do dataset: o formato/tamanho do arquivo original ja separa as classes (isso nao muda com a padronizacao das features). Registre no relatorio.")
+
+        st.write("##### Atende os minimos definidos? (modelo final)")
+        nomes_limite = {"acuracia_balanceada": "Acuracia balanceada", "revocacao_real": "Revocacao da classe Real", "f1_macro": "F1 macro"}
+        st.table(pd.DataFrame([
+            {"Metrica": nomes_limite[m], "Minimo": f"{resultado['limites_minimos'][m]*100:.0f}%",
+             "Atende": "sim" if ok else "nao"}
+            for m, ok in resultado["atende_limites"].items()
+        ]))
+
         st.divider()
 
         # ---- DETALHE POR ALGORITMO: tabela + grafico + matriz de confusao ----
@@ -212,9 +258,17 @@ with aba_resultados:
 
         for aba, (nome_algoritmo, dados_alg) in zip(abas_algoritmos, resultados_por_algoritmo.items()):
             with aba:
-                col1, col2 = st.columns(2)
-                col1.metric("Acuracia geral", f"{dados_alg['acuracia_geral']*100:.1f}%")
-                col2.metric("Tempo (validacao cruzada)", f"{dados_alg['tempo']:.3f}s")
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Acuracia", f"{dados_alg['acuracia_geral']*100:.1f}%")
+                col2.metric("Acur. balanceada", f"{dados_alg['acuracia_balanceada']*100:.1f}%")
+                col3.metric("F1 macro", f"{dados_alg['f1_macro']*100:.1f}%")
+                col4.metric("Tempo", f"{dados_alg['tempo']:.1f}s")
+
+                st.table(pd.DataFrame([
+                    {"Classe": c, "Precisao (%)": f"{m['precisao']*100:.1f}",
+                     "Revocacao (%)": f"{m['revocacao']*100:.1f}", "F1 (%)": f"{m['f1']*100:.1f}"}
+                    for c, m in dados_alg["por_classe"].items()
+                ]))
 
                 tabela_geradores = pd.DataFrame([
                     {
